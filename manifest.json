@@ -1,0 +1,17 @@
+{
+  "name": "Weeby Airport Tracker",
+  "short_name": "Weeby",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#181825",
+  "theme_color": "#181825",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/784/784844.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}
