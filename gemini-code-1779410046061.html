@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weeby - All-in-One Airport Tracker</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#181825">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/784/784844.png">
+
+    <style>
+        body { 
+            font-family: system-ui, -apple-system, sans-serif; 
+            background: #181825; 
+            color: #cdd6f4; 
+            padding: 20px; 
+            text-align: center; 
+        }
+        h1 { color: #89b4fa; margin-bottom: 5px; font-weight: 800; }
+        .subtitle { color: #a6adc8; margin-top: 0; margin-bottom: 25px; font-style: italic; }
+        .card { 
+            background: #1e1e2e; 
+            border: 2px solid #313244; 
+            border-radius: 16px; 
+            padding: 24px; 
+            margin: 15px auto; 
+            max-width: 400px; 
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+        }
+        button { 
+            background: #a6e3a1; 
+            color: #11111b; 
+            border: none; 
+            padding: 14px 28px; 
+            border-radius: 12px; 
+            font-weight: bold; 
+            font-size: 1rem;
+            cursor: pointer; 
+            transition: transform 0.1s ease;
+        }
+        button:active { transform: scale(0.98); }
+        .gate-list { text-align: left; list-style: none; padding: 0; margin: 0; }
+        .gate-item { 
+            padding: 14px; 
+            border-bottom: 1px solid #313244; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+        }
+        .gate-item:last-child { border-bottom: none; }
+        .busy-high { color: #f38ba8; font-weight: bold; }
+        .busy-mod { color: #f9e2af; font-weight: bold; }
+        .busy-low { color: #a6e3a1; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h1>✨ Weeby</h1>
+    <p class="subtitle">The All-in-One Airport Tracker</p>
+    
+    <div class="card">
+        <h3>📍 Terminal Check-In</h3>
+        <p id="tracking-status">Not broadcasting your location</p>
+        <button id="track-btn" onclick="toggleTracking()">Broadcast Location</button>
+    </div>
+
+    <div class="card">
+        <h3>📊 Real-Time Gate Densities</h3>
+        <ul id="gate-display" class="gate-list">
+            <li class="gate-item">Syncing airport telemetry...</li>
+        </ul>
+    </div>
+
+    <!-- Include Supabase Client JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        // 1. PASTE YOUR CONFIG DETAILS HERE
+        const SUPABASE_URL = "YOUR_PROJECT_URL"; 
+        const SUPABASE_ANON_KEY = "YOUR_ANON_KEY"; 
+
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const deviceUserId = "weeby_user_" + Math.random().toString(36).substring(2, 9);
+        let watchId = null;
+
+        // Start/Stop Foregound Location Tracking
+        window.toggleTracking = function() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+                document.getElementById("tracking-status").innerText = "Broadcast paused.";
+                document.getElementById("track-btn").innerText = "Broadcast Location";
+                return;
+            }
+
+            if (!("geolocation" in navigator)) {
+                alert("Geolocation mapping missing from this device container.");
+                return;
+            }
+
+            document.getElementById("tracking-status").innerText = "Locating nearby gates...";
+            
+            watchId = navigator.geolocation.watchPosition((position) => {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                document.getElementById("tracking-status").innerText = `Broadcasting actively from Terminal Grid.`;
+                
+                // Simulating Gate A1 for your prototype testing
+                sendLocationToSupabase("Gate A1", lat, lon);
+            }, (err) => {
+                document.getElementById("tracking-status").innerText = "Access blocked by device permissions.";
+            }, { enableHighAccuracy: true });
+
+            document.getElementById("track-btn").innerText = "Stop Broadcasting";
+        }
+
+        // Push data up to the Supabase Postgres Database
+        async function sendLocationToSupabase(assignedGate, latitude, longitude) {
+            const { error } = await supabase
+                .from('live_pings')
+                .upsert({ 
+                    id: deviceUserId, 
+                    gate: assignedGate, 
+                    latitude: latitude, 
+                    longitude: longitude,
+                    updated_at: new Date().toISOString()
+                });
+            if (error) console.error("Database upload fault:", error);
+        }
+
+        // Recalculate density based on active updates from last 15 minutes
+        async function renderGateMetrics() {
+            const bufferTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+            
+            const { data, error } = await supabase
+                .from('live_pings')
+                .select('gate')
+                .gt('updated_at', bufferTime);
+
+            if (error) { console.error(error); return; }
+
+            const counts = { "Gate A1": 0, "Gate A2": 0, "Gate A3": 0 };
+            data.forEach(row => { if(counts[row.gate] !== undefined) counts[row.gate]++; });
+
+            const display = document.getElementById("gate-display");
+            display.innerHTML = "";
+            
+            for (const [gateName, count] of Object.entries(counts)) {
+                let statusText = "Quiet";
+                let cssClass = "busy-low";
+                
+                if (count > 2) { statusText = "Moderate"; cssClass = "busy-mod"; }
+                if (count > 5) { statusText = "Crowded"; cssClass = "busy-high"; }
+
+                display.innerHTML += `
+                    <li class="gate-item">
+                        <span><strong>${gateName}</strong> (${count} active)</span>
+                        <span class="${cssClass}">${statusText}</span>
+                    </li>
+                `;
+            }
+        }
+
+        // Listen for live database shifts over WebSockets
+        supabase
+            .channel('schema-db-changes')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'live_pings' }, () => {
+                renderGateMetrics(); 
+            })
+            .subscribe();
+
+        // Run initial data paint on bootup
+        renderGateMetrics();
+
+        // Register background Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(() => {});
+        }
+    </script>
+</body>
+</html>
