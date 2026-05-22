@@ -74,15 +74,16 @@
     <!-- Include Supabase Client JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-        // 1. PASTE YOUR CONFIG DETAILS HERE
+        // REPLACE THESE WITH YOUR COPIED SUPABASE DETAILS IN YOUR LOCAL CODE
         const SUPABASE_URL = "https://ijodqqmvqrffetgqyebb.supabase.co"; 
         const SUPABASE_ANON_KEY = "sb_publishable_kF0UAihR2dFDNnzbDVj2vQ_4mJN2P77"; 
 
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // Initialized as supabaseClient to prevent global namespace collisions
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         const deviceUserId = "weeby_user_" + Math.random().toString(36).substring(2, 9);
         let watchId = null;
 
-        // Start/Stop Foregound Location Tracking
+        // Toggle tracking loop control interface
         window.toggleTracking = function() {
             if (watchId !== null) {
                 navigator.geolocation.clearWatch(watchId);
@@ -104,7 +105,7 @@
                 const lon = position.coords.longitude;
                 document.getElementById("tracking-status").innerText = `Broadcasting actively from Terminal Grid.`;
                 
-                // Simulating Gate A1 for your prototype testing
+                // Simulating layout updates dynamically onto Gate A1
                 sendLocationToSupabase("Gate A1", lat, lon);
             }, (err) => {
                 document.getElementById("tracking-status").innerText = "Access blocked by device permissions.";
@@ -113,9 +114,9 @@
             document.getElementById("track-btn").innerText = "Stop Broadcasting";
         }
 
-        // Push data up to the Supabase Postgres Database
+        // Push layout state tracking matrices into your remote storage pool
         async function sendLocationToSupabase(assignedGate, latitude, longitude) {
-            const { error } = await supabase
+            const { error } = await supabaseClient
                 .from('live_pings')
                 .upsert({ 
                     id: deviceUserId, 
@@ -127,11 +128,11 @@
             if (error) console.error("Database upload fault:", error);
         }
 
-        // Recalculate density based on active updates from last 15 minutes
+        // Aggregate current telemetry points from database ledger
         async function renderGateMetrics() {
             const bufferTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
             
-            const { data, error } = await supabase
+            const { data, error } = await supabaseClient
                 .from('live_pings')
                 .select('gate')
                 .gt('updated_at', bufferTime);
@@ -161,17 +162,17 @@
         }
 
         // Listen for live database shifts over WebSockets
-        supabase
+        supabaseClient
             .channel('schema-db-changes')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'live_pings' }, () => {
                 renderGateMetrics(); 
             })
             .subscribe();
 
-        // Run initial data paint on bootup
+        // Run data generation loops immediately on app startup
         renderGateMetrics();
 
-        // Register background Service Worker
+        // Register default web service worker background layer
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js').catch(() => {});
         }
