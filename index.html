@@ -15,6 +15,7 @@
             color: #cdd6f4; 
             padding: 20px; 
             text-align: center; 
+            margin: 0;
         }
         h1 { color: #89b4fa; margin-bottom: 5px; font-weight: 800; }
         .subtitle { color: #a6adc8; margin-top: 0; margin-bottom: 25px; font-style: italic; }
@@ -22,26 +23,39 @@
             background: #1e1e2e; 
             border: 2px solid #313244; 
             border-radius: 16px; 
-            padding: 24px; 
+            padding: 20px; 
             margin: 15px auto; 
-            max-width: 400px; 
+            max-width: 450px; 
             box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            text-align: left;
         }
+        .card h3 { margin-top: 0; color: #f5e0dc; border-bottom: 1px solid #313244; padding-bottom: 8px;}
         button { 
             background: #a6e3a1; 
             color: #11111b; 
             border: none; 
-            padding: 14px 28px; 
+            padding: 12px 24px; 
             border-radius: 12px; 
             font-weight: bold; 
             font-size: 1rem;
             cursor: pointer; 
+            width: 100%;
             transition: transform 0.1s ease;
         }
         button:active { transform: scale(0.98); }
-        .gate-list { text-align: left; list-style: none; padding: 0; margin: 0; }
+        select {
+            width: 100%;
+            padding: 12px;
+            background: #313244;
+            color: #cdd6f4;
+            border: 1px solid #45475a;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 1rem;
+        }
+        .gate-list { list-style: none; padding: 0; margin: 0; }
         .gate-item { 
-            padding: 14px; 
+            padding: 12px 0; 
             border-bottom: 1px solid #313244; 
             display: flex; 
             justify-content: space-between; 
@@ -51,6 +65,15 @@
         .busy-high { color: #f38ba8; font-weight: bold; }
         .busy-mod { color: #f9e2af; font-weight: bold; }
         .busy-low { color: #a6e3a1; font-weight: bold; }
+        #route-result {
+            background: #252538;
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid #89b4fa;
+            margin-top: 15px;
+            font-size: 0.95rem;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -59,31 +82,51 @@
     <p class="subtitle">The All-in-One Airport Tracker</p>
     
     <div class="card">
-        <h3>📍 Terminal Check-In</h3>
-        <p id="tracking-status">Not broadcasting your location</p>
+        <h3>📍 Live Radar Sync</h3>
+        <p id="tracking-status" style="color: #a6adc8;">Not broadcasting your location.</p>
         <button id="track-btn" onclick="toggleTracking()">Broadcast Location</button>
     </div>
 
     <div class="card">
-        <h3>📊 Real-Time Gate Densities</h3>
+        <h3>🧭 Smart Wayfinding Router</h3>
+        <label for="destination-gate" style="display:block; margin-bottom:8px; color:#a6adc8;">Select Your Target Gate:</label>
+        <select id="destination-gate">
+            <option value="Gate A1">Gate A1</option>
+            <option value="Gate A2">Gate A2</option>
+            <option value="Gate A3">Gate A3</option>
+        </select>
+        <button style="background: #89b4fa;" onclick="calculateSmartRoute()">Find Smartest Path</button>
+        <div id="route-result"></div>
+    </div>
+
+    <div class="card">
+        <h3>📊 Airport Terminal Concourse Densities</h3>
         <ul id="gate-display" class="gate-list">
             <li class="gate-item">Syncing airport telemetry...</li>
         </ul>
     </div>
 
-    <!-- Include Supabase Client JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-        // REPLACE THESE WITH YOUR COPIED SUPABASE DETAILS IN YOUR LOCAL CODE
+        // --- CONFIGURATION ---
         const SUPABASE_URL = "https://ijodqqmvqrffetgqyebb.supabase.co"; 
         const SUPABASE_ANON_KEY = "sb_publishable_kF0UAihR2dFDNnzbDVj2vQ_4mJN2P77"; 
 
-        // Initialized as supabaseClient to prevent global namespace collisions
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         const deviceUserId = "weeby_user_" + Math.random().toString(36).substring(2, 9);
         let watchId = null;
+        
+        // Global storage map for current gate traffic volumes
+        let liveGateCrowds = { "Gate A1": 0, "Gate A2": 0, "Gate A3": 0 };
 
-        // Toggle tracking loop control interface
+        // Real geo-coordinates for airport hubs (Sample: SFO Terminal regions)
+        const AIRPORT_GATES = [
+            { name: "Gate A1", lat: 37.6213, lon: -122.3790 },
+            { name: "Gate A2", lat: 37.6218, lon: -122.3798 },
+            { name: "Gate A3", lat: 37.6225, lon: -122.3805 }
+        ];
+
+        // --- GEOLOCATION LOGIC ---
         window.toggleTracking = function() {
             if (watchId !== null) {
                 navigator.geolocation.clearWatch(watchId);
@@ -103,10 +146,17 @@
             watchId = navigator.geolocation.watchPosition((position) => {
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
-                document.getElementById("tracking-status").innerText = `Broadcasting actively from Terminal Grid.`;
                 
-                // Simulating layout updates dynamically onto Gate A1
-                sendLocationToSupabase("Gate A1", lat, lon);
+                // 1. Calculate which gate the user is standing closest to
+                const closestGate = findClosestGate(lat, lon);
+                
+                document.getElementById("tracking-status").innerHTML = `
+                    Broadcasting live near <strong>${closestGate}</strong><br>
+                    <span style="font-size:0.8rem; color:#6c7086;">Coords: ${lat.toFixed(5)}, ${lon.toFixed(5)}</span>
+                `;
+                
+                // 2. Transmit coordinates and mapped gate area to Supabase
+                sendLocationToSupabase(closestGate, lat, lon);
             }, (err) => {
                 document.getElementById("tracking-status").innerText = "Access blocked by device permissions.";
             }, { enableHighAccuracy: true });
@@ -114,7 +164,32 @@
             document.getElementById("track-btn").innerText = "Stop Broadcasting";
         }
 
-        // Push layout state tracking matrices into your remote storage pool
+        // Haversine Formula: Finds closest map point mathematically
+        function findClosestGate(userLat, userLon) {
+            let closestGateName = "Gate A1";
+            let minDistance = Infinity;
+
+            AIRPORT_GATES.forEach(gate => {
+                const R = 6371e3; // Earth radius in meters
+                const phi1 = userLat * Math.PI / 180;
+                const phi2 = gate.lat * Math.PI / 180;
+                const deltaPhi = (gate.lat - userLat) * Math.PI / 180;
+                const deltaLambda = (gate.lon - userLon) * Math.PI / 180;
+
+                const a = Math.sin(deltaPhi/2) * Math.sin(deltaPhi/2) +
+                          Math.cos(phi1) * Math.cos(phi2) *
+                          Math.sin(deltaLambda/2) * Math.sin(deltaLambda/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                const distance = R * c; // Metres
+
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestGateName = gate.name;
+                }
+            });
+            return closestGateName;
+        }
+
         async function sendLocationToSupabase(assignedGate, latitude, longitude) {
             const { error } = await supabaseClient
                 .from('live_pings')
@@ -128,7 +203,7 @@
             if (error) console.error("Database upload fault:", error);
         }
 
-        // Aggregate current telemetry points from database ledger
+        // --- DATABASE CONSUMER & SNAPSHOT RENDERING ---
         async function renderGateMetrics() {
             const bufferTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
             
@@ -139,29 +214,105 @@
 
             if (error) { console.error(error); return; }
 
-            const counts = { "Gate A1": 0, "Gate A2": 0, "Gate A3": 0 };
-            data.forEach(row => { if(counts[row.gate] !== undefined) counts[row.gate]++; });
+            // Reset counts
+            for (let gate in liveGateCrowds) { liveGateCrowds[gate] = 0; }
+            data.forEach(row => { if(liveGateCrowds[row.gate] !== undefined) liveGateCrowds[row.gate]++; });
 
             const display = document.getElementById("gate-display");
             display.innerHTML = "";
             
-            for (const [gateName, count] of Object.entries(counts)) {
-                let statusText = "Quiet";
-                let cssClass = "busy-low";
-                
-                if (count > 2) { statusText = "Moderate"; cssClass = "busy-mod"; }
-                if (count > 5) { statusText = "Crowded"; cssClass = "busy-high"; }
+            for (const [gateName, count] of Object.entries(liveGateCrowds)) {
+                let statusText = "Quiet Corridor"; let cssClass = "busy-low";
+                if (count >= 2) { statusText = "Moderate Foot Traffic"; cssClass = "busy-mod"; }
+                if (count >= 5) { statusText = "Heavy Bottleneck"; cssClass = "busy-high"; }
 
                 display.innerHTML += `
                     <li class="gate-item">
-                        <span><strong>${gateName}</strong> (${count} active)</span>
+                        <span><strong>${gateName}</strong> (${count} users)</span>
                         <span class="${cssClass}">${statusText}</span>
                     </li>
                 `;
             }
         }
 
-        // Listen for live database shifts over WebSockets
+        // --- SMART ROUTING SYSTEM (DIJKSTRA MAP ALGORITHM) ---
+        window.calculateSmartRoute = function() {
+            const targetGate = document.getElementById("destination-gate").value;
+            const routeBox = document.getElementById("route-result");
+            routeBox.style.display = "block";
+
+            // Define map nodes: Security Checkpoint, Main Concourse, and individual Gates
+            // Paths are weighted by walking distance in meters
+            const baseGraph = {
+                'Security': { 'Main Concourse': 50 },
+                'Main Concourse': { 'Gate A1': 30, 'Gate A2': 60, 'Gate A3': 120 },
+                'Gate A1': { 'Gate A2': 40 },
+                'Gate A2': { 'Gate A3': 50 },
+                'Gate A3': {}
+            };
+
+            // Traffic Adjustments: If a gate is crowded, artificially inflate path cost!
+            for (let node in baseGraph['Main Concourse']) {
+                const crowdCount = liveGateCrowds[node] || 0;
+                if (crowdCount >= 5) {
+                    baseGraph['Main Concourse'][node] += 300; // Add heavy time penalty to pass through
+                } else if (crowdCount >= 2) {
+                    baseGraph['Main Concourse'][node] += 100; // Add minor time penalty
+                }
+            }
+
+            // Simple implementation of Dijkstra's algorithm
+            const shortestPath = (graph, start, end) => {
+                const costs = Object.assign({ [end]: Infinity }, graph[start]);
+                const parents = { [end]: null };
+                for (let child in graph[start]) { parents[child] = start; }
+                const processed = [];
+
+                let node = lowestCostNode(costs, processed);
+                while (node) {
+                    let cost = costs[node];
+                    let children = graph[node];
+                    for (let n in children) {
+                        let newCost = cost + children[n];
+                        if (!costs[n] || costs[n] > newCost) {
+                            costs[n] = newCost;
+                            parents[n] = node;
+                        }
+                    }
+                    processed.push(node);
+                    node = lowestCostNode(costs, processed);
+                }
+
+                let optimalPath = [end];
+                let parent = parents[end];
+                while (parent) { optimalPath.push(parent); parent = parents[parent]; }
+                optimalPath.reverse();
+                return { distance: costs[end], path: optimalPath };
+            };
+
+            function lowestCostNode(costs, processed) {
+                return Object.keys(costs).reduce((lowest, node) => {
+                    if (lowest === null || costs[node] < costs[lowest]) {
+                        if (!processed.includes(node)) lowest = node;
+                    }
+                    return lowest;
+                }, null);
+            }
+
+            const routeResult = shortestPath(baseGraph, 'Security', targetGate);
+            
+            // Build visual instructions
+            let directionSteps = `<strong>⚡ Route Generated (Avoiding Crowd Bottlenecks):</strong><br><ol>`;
+            routeResult.path.forEach((step, i) => {
+                if(i === 0) directionSteps += `<li>Start from ${step}</li>`;
+                else directionSteps += `<li>Move forward to <strong>${step}</strong></li>`;
+            });
+            directionSteps += `</ol><span style="font-size:0.85rem; color:#a6adc8;">Route Cost Index (Lower is faster): ${routeResult.distance}</span>`;
+            
+            routeBox.innerHTML = directionSteps;
+        }
+
+        // WebSockets Listener loop
         supabaseClient
             .channel('schema-db-changes')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'live_pings' }, () => {
@@ -169,10 +320,8 @@
             })
             .subscribe();
 
-        // Run data generation loops immediately on app startup
         renderGateMetrics();
 
-        // Register default web service worker background layer
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js').catch(() => {});
         }
