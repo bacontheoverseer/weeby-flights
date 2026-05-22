@@ -108,31 +108,24 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-        // --- CONFIGURATION ---
-        const SUPABASE_URL = "https://ijodqqmvqrffetgqyebb.supabase.co"; 
-        const SUPABASE_ANON_KEY = "sb_publishable_kF0UAihR2dFDNnzbDVj2vQ_4mJN2P77"; 
+        // These tokens are automatically swapped by GitHub Actions during deployment
+        const SUPABASE_URL = "INSERT_SUPABASE_URL_HERE"; 
+        const SUPABASE_ANON_KEY = "INSERT_SUPABASE_ANON_KEY_HERE"; 
 
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         const deviceUserId = "weeby_user_" + Math.random().toString(36).substring(2, 9);
         let watchId = null;
-        
-        // Global storage map for current gate traffic volumes
         let liveGateCrowds = { "Gate A1": 0, "Gate A2": 0, "Gate A3": 0 };
 
-        // Real geo-coordinates for airport hubs (Sample: SFO Terminal regions)
         const AIRPORT_GATES = [
             { name: "Gate A1", lat: 37.6213, lon: -122.3790 },
             { name: "Gate A2", lat: 37.6218, lon: -122.3798 },
             { name: "Gate A3", lat: 37.6225, lon: -122.3805 }
         ];
 
-        // --- GEOLOCATION LOGIC ---
         window.toggleTracking = function() {
             if (watchId !== null) {
-                navigator.geolocation.clearWatch(watchId);
-                watchId = null;
-                document.getElementById("tracking-status").innerText = "Broadcast paused.";
-                document.getElementById("track-btn").innerText = "Broadcast Location";
+                stopTrackingSession();
                 return;
             }
 
@@ -146,8 +139,6 @@
             watchId = navigator.geolocation.watchPosition((position) => {
                 const lat = position.coords.latitude;
                 const lon = position.coords.longitude;
-                
-                // 1. Calculate which gate the user is standing closest to
                 const closestGate = findClosestGate(lat, lon);
                 
                 document.getElementById("tracking-status").innerHTML = `
@@ -155,7 +146,6 @@
                     <span style="font-size:0.8rem; color:#6c7086;">Coords: ${lat.toFixed(5)}, ${lon.toFixed(5)}</span>
                 `;
                 
-                // 2. Transmit coordinates and mapped gate area to Supabase
                 sendLocationToSupabase(closestGate, lat, lon);
             }, (err) => {
                 document.getElementById("tracking-status").innerText = "Access blocked by device permissions.";
@@ -164,13 +154,22 @@
             document.getElementById("track-btn").innerText = "Stop Broadcasting";
         }
 
-        // Haversine Formula: Finds closest map point mathematically
+        function stopTrackingSession() {
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            document.getElementById("tracking-status").innerText = "Broadcast paused.";
+            document.getElementById("track-btn").innerText = "Broadcast Location";
+            removeLocationFromSupabase();
+        }
+
         function findClosestGate(userLat, userLon) {
             let closestGateName = "Gate A1";
             let minDistance = Infinity;
 
             AIRPORT_GATES.forEach(gate => {
-                const R = 6371e3; // Earth radius in meters
+                const R = 6371e3;
                 const phi1 = userLat * Math.PI / 180;
                 const phi2 = gate.lat * Math.PI / 180;
                 const deltaPhi = (gate.lat - userLat) * Math.PI / 180;
@@ -180,7 +179,7 @@
                           Math.cos(phi1) * Math.cos(phi2) *
                           Math.sin(deltaLambda/2) * Math.sin(deltaLambda/2);
                 const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                const distance = R * c; // Metres
+                const distance = R * c;
 
                 if (distance < minDistance) {
                     minDistance = distance;
@@ -191,7 +190,7 @@
         }
 
         async function sendLocationToSupabase(assignedGate, latitude, longitude) {
-            const { error } = await supabaseClient
+            await supabaseClient
                 .from('live_pings')
                 .upsert({ 
                     id: deviceUserId, 
@@ -200,10 +199,20 @@
                     longitude: longitude,
                     updated_at: new Date().toISOString()
                 });
-            if (error) console.error("Database upload fault:", error);
         }
 
-        // --- DATABASE CONSUMER & SNAPSHOT RENDERING ---
+        async function removeLocationFromSupabase() {
+            await supabaseClient.from('live_pings').delete().eq('id', deviceUserId);
+        }
+
+        // TAB CLOSURE REMOVAL SYSTEM
+        // Fires a fast cleanup query before the page context disappears completely
+        function handleTabClosure() {
+            removeLocationFromSupabase();
+        }
+        window.addEventListener('beforeunload', handleTabClosure);
+        window.addEventListener('pagehide', handleTabClosure);
+
         async function renderGateMetrics() {
             const bufferTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
             
@@ -212,9 +221,8 @@
                 .select('gate')
                 .gt('updated_at', bufferTime);
 
-            if (error) { console.error(error); return; }
+            if (error) return;
 
-            // Reset counts
             for (let gate in liveGateCrowds) { liveGateCrowds[gate] = 0; }
             data.forEach(row => { if(liveGateCrowds[row.gate] !== undefined) liveGateCrowds[row.gate]++; });
 
@@ -235,14 +243,11 @@
             }
         }
 
-        // --- SMART ROUTING SYSTEM (DIJKSTRA MAP ALGORITHM) ---
         window.calculateSmartRoute = function() {
             const targetGate = document.getElementById("destination-gate").value;
             const routeBox = document.getElementById("route-result");
             routeBox.style.display = "block";
 
-            // Define map nodes: Security Checkpoint, Main Concourse, and individual Gates
-            // Paths are weighted by walking distance in meters
             const baseGraph = {
                 'Security': { 'Main Concourse': 50 },
                 'Main Concourse': { 'Gate A1': 30, 'Gate A2': 60, 'Gate A3': 120 },
@@ -251,17 +256,12 @@
                 'Gate A3': {}
             };
 
-            // Traffic Adjustments: If a gate is crowded, artificially inflate path cost!
             for (let node in baseGraph['Main Concourse']) {
                 const crowdCount = liveGateCrowds[node] || 0;
-                if (crowdCount >= 5) {
-                    baseGraph['Main Concourse'][node] += 300; // Add heavy time penalty to pass through
-                } else if (crowdCount >= 2) {
-                    baseGraph['Main Concourse'][node] += 100; // Add minor time penalty
-                }
+                if (crowdCount >= 5) baseGraph['Main Concourse'][node] += 300;
+                else if (crowdCount >= 2) baseGraph['Main Concourse'][node] += 100;
             }
 
-            // Simple implementation of Dijkstra's algorithm
             const shortestPath = (graph, start, end) => {
                 const costs = Object.assign({ [end]: Infinity }, graph[start]);
                 const parents = { [end]: null };
@@ -301,18 +301,16 @@
 
             const routeResult = shortestPath(baseGraph, 'Security', targetGate);
             
-            // Build visual instructions
             let directionSteps = `<strong>⚡ Route Generated (Avoiding Crowd Bottlenecks):</strong><br><ol>`;
             routeResult.path.forEach((step, i) => {
                 if(i === 0) directionSteps += `<li>Start from ${step}</li>`;
                 else directionSteps += `<li>Move forward to <strong>${step}</strong></li>`;
             });
-            directionSteps += `</ol><span style="font-size:0.85rem; color:#a6adc8;">Route Cost Index (Lower is faster): ${routeResult.distance}</span>`;
+            directionSteps += `</ol><span style="font-size:0.85rem; color:#a6adc8;">Route Cost Index: ${routeResult.distance}</span>`;
             
             routeBox.innerHTML = directionSteps;
         }
 
-        // WebSockets Listener loop
         supabaseClient
             .channel('schema-db-changes')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'live_pings' }, () => {
