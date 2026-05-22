@@ -1,0 +1,27 @@
+name: Deploy PWA with Secrets
+
+on:
+  push:
+    branches:
+      - main # Change to master if your default branch is master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Inject Supabase Secrets into HTML
+        run: |
+          sed -i "s|INSERT_SUPABASE_URL_HERE|${{ secrets.SUPABASE_URL }}|g" index.html
+          sed -i "s|INSERT_SUPABASE_ANON_KEY_HERE|${{ secrets.SUPABASE_ANON_KEY }}|g" index.html
+
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
+        id: deployment
